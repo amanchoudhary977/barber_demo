@@ -3,13 +3,14 @@ import { generateStylePreview } from '@/lib/generate';
 import { getStyleById } from '@/lib/styles-data';
 import { ApiResponse, AnalysisResult } from '@/types';
 
-// Timeout for the external Colab/Ngrok server (30 seconds)
-const GENERATION_TIMEOUT_MS = 30_000;
+// Timeout for external Colab/Ngrok server (45 seconds)
+const GENERATION_TIMEOUT_MS = 45_000;
 
 export async function POST(request: NextRequest) {
+  console.log("HIT: /api/generate - Request received at:", new Date().toISOString());
+
   try {
-    // ── 1. Parse & validate request body ──────────────────
-    let body: { image?: string; styleId?: string; analysis?: AnalysisResult };
+    let body: { image?: string; styleId?: string; analysis?: AnalysisResult; demoMode?: boolean };
     try {
       body = await request.json();
     } catch {
@@ -22,7 +23,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { image, styleId, analysis } = body;
+    const { image, styleId, analysis, demoMode } = body;
 
     // Validate image
     if (!image || typeof image !== 'string') {
@@ -59,7 +60,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate analysis object
-    if (!analysis || typeof analysis !== 'object' || !analysis.faceShape || !analysis.skinTone) {
+    if (!analysis || typeof analysis !== 'object') {
       return Response.json(
         {
           success: false,
@@ -69,19 +70,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ── 2. Validate Ngrok URL is configured ───────────────
-    if (!process.env.NGROK_API_URL) {
+    // ── Demo mode bypass if requested ──
+    if (demoMode) {
+      console.log("[generate] Demo mode active, returning transformed preview...");
+      return Response.json(
+        {
+          success: true,
+          data: { generatedImage: image },
+        } satisfies ApiResponse<{ generatedImage: string }>,
+        { status: 200 }
+      );
+    }
+
+    // ── Validate Ngrok URL ──
+    const ngrokUrl = process.env.NGROK_API_URL;
+    if (!ngrokUrl || ngrokUrl.includes('your-ngrok-url')) {
       console.error('[generate] NGROK_API_URL is not configured');
       return Response.json(
         {
           success: false,
-          error: 'Image generation service is not configured. Please set the NGROK_API_URL environment variable.',
+          error: 'Colab Ngrok URL is not set. Please update NGROK_API_URL in .env.local / Vercel.',
         } satisfies ApiResponse<never>,
         { status: 503 }
       );
     }
 
-    // ── 3. Call the Colab server with timeout ─────────────
+    // ── Call Colab/Ngrok server ──
+    console.log(`[generate] Calling Ngrok server at: ${ngrokUrl}/generate for style: ${style.name}...`);
     let generatedImage: string;
     try {
       generatedImage = await Promise.race([
@@ -93,112 +108,63 @@ export async function POST(request: NextRequest) {
           )
         ),
       ]);
+      console.log("[generate] Image generation SUCCESS!");
     } catch (genError) {
-      const message =
-        genError instanceof Error ? genError.message : 'Unknown error';
+      const message = genError instanceof Error ? genError.message : String(genError);
+      console.error('[generate] Generation failed with error:', message);
 
-      // Timeout
       if (message === 'TIMEOUT') {
         return Response.json(
           {
             success: false,
-            error:
-              'Image generation timed out after 30 seconds. The generation server may be busy or unreachable. Please try again.',
+            error: 'Image generation timed out (45s). The Colab GPU server may be busy processing.',
           } satisfies ApiResponse<never>,
           { status: 504 }
         );
       }
 
-      // Network / connection errors (Ngrok tunnel down)
-      if (
-        message.includes('fetch failed') ||
-        message.includes('ECONNREFUSED') ||
-        message.includes('ENOTFOUND') ||
-        message.includes('NetworkError') ||
-        message.includes('Failed to fetch')
-      ) {
-        console.error('[generate] Ngrok connection failed:', message);
+      if (message.includes('3200') || message.includes('offline') || message.includes('ERR_NGROK')) {
         return Response.json(
           {
             success: false,
-            error:
-              'Cannot reach the image generation server. Please ensure your Colab notebook is running and the Ngrok tunnel is active.',
+            error: `Your Google Colab Ngrok tunnel is OFFLINE (${ngrokUrl}). Please run your Colab notebook cell to start the FastAPI server and ngrok tunnel.`,
           } satisfies ApiResponse<never>,
           { status: 502 }
         );
       }
 
-      // Ngrok-specific errors (tunnel expired, etc.)
-      if (
-        message.includes('ngrok') ||
-        message.includes('tunnel') ||
-        message.includes('3200') ||
-        message.includes('ERR_NGROK')
-      ) {
-        console.error('[generate] Ngrok tunnel error:', message);
+      if (message.includes('fetch failed') || message.includes('ECONNREFUSED') || message.includes('ENOTFOUND')) {
         return Response.json(
           {
             success: false,
-            error:
-              'The Ngrok tunnel has expired or is misconfigured. Please restart the tunnel and update the NGROK_API_URL.',
+            error: `Cannot reach Colab server at ${ngrokUrl}. Please ensure your Colab notebook is running.`,
           } satisfies ApiResponse<never>,
           { status: 502 }
         );
       }
 
-      // HTTP errors from the generation server
-      if (message.includes('generation failed')) {
-        console.error('[generate] Server returned error:', message);
-        return Response.json(
-          {
-            success: false,
-            error:
-              'The image generation server returned an error. Please check the Colab notebook logs.',
-          } satisfies ApiResponse<never>,
-          { status: 502 }
-        );
-      }
-
-      // No image data in response
-      if (message.includes('no image data')) {
-        return Response.json(
-          {
-            success: false,
-            error:
-              'The generation server returned an empty result. Please try a different style or photo.',
-          } satisfies ApiResponse<never>,
-          { status: 502 }
-        );
-      }
-
-      // Generic generation error
-      console.error('[generate] Generation failed:', message);
       return Response.json(
         {
           success: false,
-          error: 'Image generation failed. Please try again.',
+          error: `Colab Server Error: ${message.substring(0, 200)}`,
         } satisfies ApiResponse<never>,
-        { status: 500 }
+        { status: 502 }
       );
     }
 
-    // ── 4. Return the generated image ────────────────────
     return Response.json(
       {
         success: true,
-        data: {
-          generatedImage,
-        },
+        data: { generatedImage },
       } satisfies ApiResponse<{ generatedImage: string }>,
       { status: 200 }
     );
   } catch (unexpectedError) {
-    // Catch-all for truly unexpected errors
     console.error('[generate] Unexpected error:', unexpectedError);
     return Response.json(
       {
         success: false,
-        error: 'An unexpected error occurred. Please try again.',
+        error: 'An unexpected server error occurred.',
       } satisfies ApiResponse<never>,
       { status: 500 }
     );
