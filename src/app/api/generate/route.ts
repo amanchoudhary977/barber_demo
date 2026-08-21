@@ -3,6 +3,10 @@ import { generateStylePreview } from '@/lib/generate';
 import { getStyleById } from '@/lib/styles-data';
 import { ApiResponse, AnalysisResult } from '@/types';
 
+// Vercel Serverless Function Configuration (allow up to 60s for Colab GPU generation)
+export const maxDuration = 60;
+export const dynamic = 'force-dynamic';
+
 // Timeout for external Colab/Ngrok server (45 seconds)
 const GENERATION_TIMEOUT_MS = 45_000;
 

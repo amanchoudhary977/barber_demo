@@ -2,6 +2,10 @@ import { NextRequest } from 'next/server';
 import { analyzePhoto } from '@/lib/gemini';
 import { ApiResponse, AnalysisResult } from '@/types';
 
+// Vercel Serverless Function Configuration
+export const maxDuration = 60;
+export const dynamic = 'force-dynamic';
+
 // Max image size: 15MB
 const MAX_IMAGE_SIZE_BYTES = 15 * 1024 * 1024;
 
