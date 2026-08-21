@@ -12,6 +12,7 @@ import StyleSelector from '@/components/StyleSelector';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import Button from '@/components/ui/Button';
 import Card from '@/components/ui/Card';
+import ErrorDialog from '@/components/ui/ErrorDialog';
 
 export default function UploadPage() {
   const router = useRouter();
@@ -363,6 +364,15 @@ export default function UploadPage() {
           </div>
         )}
       </div>
+
+      {/* ── Diagnostic Error Dialog Modal ──────────── */}
+      <ErrorDialog
+        isOpen={Boolean(error)}
+        title="Processing Error"
+        error={error}
+        onClose={() => setError(null)}
+        onRetry={image ? handleAnalyze : undefined}
+      />
     </div>
   );
 }
