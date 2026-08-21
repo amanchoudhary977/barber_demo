@@ -33,72 +33,71 @@ export default function UploadPage() {
 
   // ── Guard: recover from stale states on page refresh ──
   useEffect(() => {
-    // If stuck in 'analyzing' or 'generating' with no in-flight request, revert
     if (step === 'analyzing' && image) {
       setStep('upload');
     } else if (step === 'generating' && analysis) {
       setStep('selecting');
     } else if (step === 'preview') {
-      // If on /upload but step is 'preview', redirect to /results
       router.replace('/results');
     } else if (step !== 'upload' && !image) {
-      // No image but past the upload step — reset
       resetToUpload();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Step 1: Handle image selection ──────────────────
-  const handleImageSelect = useCallback(
-    (base64: string, fileName: string) => {
-      setImage(base64, fileName);
+  // ── Analyze function ────────────────────────────────
+  const runAnalysis = useCallback(
+    async (imageBase64: string) => {
+      setStep('analyzing');
+      setError(null);
+
+      try {
+        const response = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: imageBase64 }),
+        });
+
+        const text = await response.text();
+        let data: { success?: boolean; data?: AnalysisResult; error?: string };
+        try {
+          data = JSON.parse(text);
+        } catch {
+          console.error('API /api/analyze non-JSON response:', text);
+          setError(`Server error (${response.status}): ${text.substring(0, 150)}`);
+          setStep('upload');
+          return;
+        }
+
+        if (!data.success || !data.data) {
+          setError(data.error || 'Analysis failed. Please try again.');
+          setStep('upload');
+          return;
+        }
+
+        setAnalysis(data.data);
+      } catch (err) {
+        console.error('Analysis request error:', err);
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Network error. Please check your connection and try again.'
+        );
+        setStep('upload');
+      }
     },
-    [setImage]
+    [setStep, setError, setAnalysis]
   );
 
-  // ── Step 2: Trigger Gemini analysis ─────────────────
-  const handleAnalyze = useCallback(async () => {
-    if (!image) return;
-
-    setStep('analyzing');
-    setError(null);
-
-    try {
-      const response = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image }),
-      });
-
-      const text = await response.text();
-      let data: { success?: boolean; data?: AnalysisResult; error?: string };
-      try {
-        data = JSON.parse(text);
-      } catch {
-        console.error('API /api/analyze non-JSON response:', text);
-        setError(`Server error (${response.status}): ${text.substring(0, 150)}`);
-        setStep('upload');
-        return;
-      }
-
-      if (!data.success || !data.data) {
-        setError(data.error || 'Analysis failed. Please try again.');
-        setStep('upload');
-        return;
-      }
-
-      setAnalysis(data.data);
-      // step is automatically set to 'results' by setAnalysis
-    } catch (err) {
-      console.error('Analysis request error:', err);
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Network error. Please check your connection and try again.'
-      );
-      setStep('upload');
-    }
-  }, [image, setStep, setError, setAnalysis]);
+  // ── Step 1: Handle image selection & auto-analyze ────
+  const handleImageSelect = useCallback(
+    (base64: string, name: string) => {
+      setImage(base64, name);
+      // Immediately run analysis automatically upon photo selection
+      runAnalysis(base64);
+    },
+    [setImage, runAnalysis]
+  );
 
   // ── Step 3: Handle style selection ──────────────────
   const handleProceedToStyles = useCallback(() => {
@@ -143,7 +142,6 @@ export default function UploadPage() {
         }
 
         setGeneratedImage(data.data.generatedImage);
-        // step is automatically set to 'preview' by setGeneratedImage
         router.push('/results');
       } catch (err) {
         console.error('Generation request error:', err);
@@ -175,7 +173,7 @@ export default function UploadPage() {
             { key: 'generate', label: 'Preview', num: 4 },
           ].map((s, i) => {
             const isActive =
-              (s.key === 'upload' && (step === 'upload')) ||
+              (s.key === 'upload' && step === 'upload') ||
               (s.key === 'analyze' && (step === 'analyzing' || step === 'results')) ||
               (s.key === 'style' && step === 'selecting') ||
               (s.key === 'generate' && (step === 'generating' || step === 'preview'));
@@ -285,7 +283,7 @@ export default function UploadPage() {
                 <Button
                   variant="primary"
                   size="lg"
-                  onClick={handleAnalyze}
+                  onClick={() => runAnalysis(image)}
                   icon={<span>🔍</span>}
                 >
                   Analyze My Face
@@ -377,7 +375,7 @@ export default function UploadPage() {
         title="Processing Error"
         error={error}
         onClose={() => setError(null)}
-        onRetry={image ? handleAnalyze : undefined}
+        onRetry={image ? () => runAnalysis(image) : undefined}
       />
     </div>
   );
