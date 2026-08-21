@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useFlow } from '@/context/FlowContext';
 import { StyleOption, AnalysisResult } from '@/types';
@@ -31,13 +31,13 @@ export default function UploadPage() {
     resetToUpload,
   } = useFlow();
 
+  // Local loading state guarantee
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+
   // ── Guard: recover from stale states on page refresh ──
   useEffect(() => {
-    if (step === 'analyzing' && image) {
-      setStep('upload');
-    } else if (step === 'generating' && analysis) {
-      setStep('selecting');
-    } else if (step === 'preview') {
+    if (step === 'preview') {
       router.replace('/results');
     } else if (step !== 'upload' && !image) {
       resetToUpload();
@@ -45,58 +45,78 @@ export default function UploadPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Analyze function ────────────────────────────────
-  const runAnalysis = useCallback(
-    async (imageBase64: string) => {
+  // ── Analyze function (Guaranteed loading + catch silent failures) ────
+  const handleAnalyze = useCallback(
+    async (targetImage?: string) => {
+      const img = targetImage || image;
+      console.log("[frontend] handleAnalyze triggered. Image available:", Boolean(img));
+
+      if (!img) {
+        setError('Please select or upload a photo first.');
+        return;
+      }
+
+      // 1. FORCE LOADING STATE IMMEDIATELY
+      setIsAnalyzing(true);
       setStep('analyzing');
       setError(null);
 
       try {
+        console.log("[frontend] Sending POST /api/analyze with payload length:", img.length);
         const response = await fetch('/api/analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: imageBase64 }),
+          body: JSON.stringify({ image: img }),
         });
 
+        console.log("[frontend] /api/analyze response received. HTTP status:", response.status);
         const text = await response.text();
+        console.log("[frontend] /api/analyze raw response body:", text);
+
         let data: { success?: boolean; data?: AnalysisResult; error?: string };
         try {
           data = JSON.parse(text);
-        } catch {
-          console.error('API /api/analyze non-JSON response:', text);
-          setError(`Server error (${response.status}): ${text.substring(0, 150)}`);
+        } catch (jsonErr) {
+          console.error("[frontend] Failed to parse JSON response:", jsonErr);
+          const errMsg = `Server returned non-JSON response (${response.status}): ${text.substring(0, 150)}`;
+          setError(errMsg);
           setStep('upload');
+          setIsAnalyzing(false);
           return;
         }
 
-        if (!data.success || !data.data) {
-          setError(data.error || 'Analysis failed. Please try again.');
+        if (!response.ok || !data.success || !data.data) {
+          const errMsg = data.error || `Analysis failed with HTTP ${response.status}`;
+          console.error("[frontend] Analysis returned error:", errMsg);
+          setError(errMsg);
           setStep('upload');
+          setIsAnalyzing(false);
           return;
         }
 
+        console.log("[frontend] Analysis SUCCESS! Data:", data.data);
+        setIsAnalyzing(false);
         setAnalysis(data.data);
       } catch (err) {
-        console.error('Analysis request error:', err);
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Network error. Please check your connection and try again.'
-        );
+        console.error("[frontend] Network / Fetch error in handleAnalyze:", err);
+        const errMsg = err instanceof Error ? err.message : 'Network error. Please check your internet connection.';
+        setError(errMsg);
         setStep('upload');
+        setIsAnalyzing(false);
       }
     },
-    [setStep, setError, setAnalysis]
+    [image, setStep, setError, setAnalysis]
   );
 
-  // ── Step 1: Handle image selection & auto-analyze ────
+  // ── Step 1: Handle image selection ──────────────────
   const handleImageSelect = useCallback(
     (base64: string, name: string) => {
+      console.log("[frontend] Photo selected:", name, "Base64 length:", base64.length);
       setImage(base64, name);
-      // Immediately run analysis automatically upon photo selection
-      runAnalysis(base64);
+      // Immediately trigger analyze with guaranteed loading state
+      handleAnalyze(base64);
     },
-    [setImage, runAnalysis]
+    [setImage, handleAnalyze]
   );
 
   // ── Step 3: Handle style selection ──────────────────
@@ -109,11 +129,14 @@ export default function UploadPage() {
     async (style: StyleOption) => {
       if (!image || !analysis) return;
 
+      console.log("[frontend] Style selected:", style.name);
       setSelectedStyle(style);
+      setIsGenerating(true);
       setStep('generating');
       setError(null);
 
       try {
+        console.log("[frontend] Sending POST /api/generate...");
         const response = await fetch('/api/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -124,33 +147,39 @@ export default function UploadPage() {
           }),
         });
 
+        console.log("[frontend] /api/generate HTTP status:", response.status);
         const text = await response.text();
+        console.log("[frontend] /api/generate raw response body:", text);
+
         let data: { success?: boolean; data?: { generatedImage: string }; error?: string };
         try {
           data = JSON.parse(text);
         } catch {
-          console.error('API /api/generate non-JSON response:', text);
-          setError(`Server error (${response.status}): ${text.substring(0, 150)}`);
+          const errMsg = `Server returned non-JSON response (${response.status}): ${text.substring(0, 150)}`;
+          setError(errMsg);
           setStep('selecting');
+          setIsGenerating(false);
           return;
         }
 
-        if (!data.success || !data.data?.generatedImage) {
-          setError(data.error || 'Generation failed. Please try again.');
+        if (!response.ok || !data.success || !data.data?.generatedImage) {
+          const errMsg = data.error || `Generation failed with HTTP ${response.status}`;
+          setError(errMsg);
           setStep('selecting');
+          setIsGenerating(false);
           return;
         }
 
+        console.log("[frontend] Generation SUCCESS! Navigating to /results...");
+        setIsGenerating(false);
         setGeneratedImage(data.data.generatedImage);
         router.push('/results');
       } catch (err) {
-        console.error('Generation request error:', err);
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Network error. Please check your connection and try again.'
-        );
+        console.error("[frontend] Generation error:", err);
+        const errMsg = err instanceof Error ? err.message : 'Network error. Please check your connection.';
+        setError(errMsg);
         setStep('selecting');
+        setIsGenerating(false);
       }
     },
     [image, analysis, setSelectedStyle, setStep, setError, setGeneratedImage, router]
@@ -174,9 +203,9 @@ export default function UploadPage() {
           ].map((s, i) => {
             const isActive =
               (s.key === 'upload' && step === 'upload') ||
-              (s.key === 'analyze' && (step === 'analyzing' || step === 'results')) ||
+              (s.key === 'analyze' && (step === 'analyzing' || step === 'results' || isAnalyzing)) ||
               (s.key === 'style' && step === 'selecting') ||
-              (s.key === 'generate' && (step === 'generating' || step === 'preview'));
+              (s.key === 'generate' && (step === 'generating' || step === 'preview' || isGenerating));
             const isPast =
               (s.key === 'upload' && step !== 'upload') ||
               (s.key === 'analyze' && ['selecting', 'generating', 'preview'].includes(step)) ||
@@ -226,9 +255,9 @@ export default function UploadPage() {
 
         {/* ── Error Banner ───────────────────────────── */}
         {error && (
-          <Card padding="sm" className="animate-fade-in border-error/20 !bg-error/5">
+          <Card padding="sm" className="animate-fade-in border-error/30 !bg-error/10">
             <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-lg bg-error/10 flex items-center justify-center shrink-0">
+              <div className="w-8 h-8 rounded-lg bg-error/20 flex items-center justify-center shrink-0">
                 <svg
                   className="w-4 h-4 text-error"
                   fill="none"
@@ -244,8 +273,8 @@ export default function UploadPage() {
                 </svg>
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-error">Something went wrong</p>
-                <p className="text-xs text-error/80 mt-0.5">{error}</p>
+                <p className="text-sm font-semibold text-error">Analysis Error</p>
+                <p className="text-xs text-neutral-200 mt-1 font-mono break-words">{error}</p>
               </div>
               <button
                 onClick={() => setError(null)}
@@ -259,8 +288,8 @@ export default function UploadPage() {
           </Card>
         )}
 
-        {/* ── Step: Upload ───────────────────────────── */}
-        {step === 'upload' && (
+        {/* ── Step: Upload (or when not analyzing/results) ────────────────── */}
+        {(step === 'upload' && !isAnalyzing) && (
           <div className="space-y-6">
             <div className="text-center space-y-1">
               <h1 className="text-xl sm:text-2xl font-bold font-[family-name:var(--font-display)] text-white">
@@ -283,7 +312,8 @@ export default function UploadPage() {
                 <Button
                   variant="primary"
                   size="lg"
-                  onClick={() => runAnalysis(image)}
+                  onClick={() => handleAnalyze(image)}
+                  isLoading={isAnalyzing}
                   icon={<span>🔍</span>}
                 >
                   Analyze My Face
@@ -293,15 +323,15 @@ export default function UploadPage() {
           </div>
         )}
 
-        {/* ── Step: Analyzing ────────────────────────── */}
-        {step === 'analyzing' && (
+        {/* ── Step: Analyzing (Forced immediately) ────────────────── */}
+        {(step === 'analyzing' || isAnalyzing) && (
           <div className="py-12">
             <LoadingSpinner mode="analyzing" />
           </div>
         )}
 
         {/* ── Step: Analysis Results ─────────────────── */}
-        {step === 'results' && analysis && (
+        {step === 'results' && analysis && !isAnalyzing && (
           <div className="space-y-6">
             <div className="text-center space-y-1">
               <h1 className="text-xl sm:text-2xl font-bold font-[family-name:var(--font-display)] text-white">
@@ -345,7 +375,7 @@ export default function UploadPage() {
         )}
 
         {/* ── Step: Style Selection ───────────────────── */}
-        {step === 'selecting' && analysis && (
+        {step === 'selecting' && analysis && !isGenerating && (
           <StyleSelector
             onSelect={handleStyleSelect}
             recommendedStyleIds={recommendedIds}
@@ -353,14 +383,14 @@ export default function UploadPage() {
         )}
 
         {/* ── Step: Generating ───────────────────────── */}
-        {step === 'generating' && (
+        {(step === 'generating' || isGenerating) && (
           <div className="py-12">
             <LoadingSpinner mode="generating" />
           </div>
         )}
 
         {/* ── Start Over ────────────────────────────── */}
-        {step !== 'analyzing' && step !== 'generating' && step !== 'upload' && (
+        {!isAnalyzing && !isGenerating && step !== 'upload' && (
           <div className="flex justify-center pt-4">
             <Button variant="ghost" size="sm" onClick={resetToUpload}>
               ← Start Over with New Photo
@@ -375,7 +405,7 @@ export default function UploadPage() {
         title="Processing Error"
         error={error}
         onClose={() => setError(null)}
-        onRetry={image ? () => runAnalysis(image) : undefined}
+        onRetry={image ? () => handleAnalyze(image) : undefined}
       />
     </div>
   );
