@@ -19,24 +19,27 @@ export interface StyleOption {
   name: string;
   description: string;
   category: StyleCategory;
-  promptTemplate: string;
   emoji: string;
   tags: string[];
+  frontUrl: string;
+  sideUrl: string;
+  backUrl: string;
 }
 
 // ── Generation Types ───────────────────────────────────
 
 export interface GenerationRequest {
-  image: string; // base64 encoded image
+  image: string; // base64 encoded user image
   styleId: string;
-  analysis: AnalysisResult;
+  templateUrl?: string;
+  analysis?: AnalysisResult;
 }
 
 export interface GenerationResult {
   originalImage: string; // base64
   generatedImage: string; // base64
   styleApplied: StyleOption;
-  analysis: AnalysisResult;
+  analysis?: AnalysisResult;
 }
 
 // ── API Response Types ─────────────────────────────────

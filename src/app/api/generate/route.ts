@@ -3,7 +3,7 @@ import { generateStylePreview } from '@/lib/generate';
 import { getStyleById } from '@/lib/styles-data';
 import { ApiResponse, AnalysisResult } from '@/types';
 
-// Vercel Serverless Function Configuration (allow up to 60s for Colab GPU generation)
+// Vercel Serverless Function Configuration
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
 const GENERATION_TIMEOUT_MS = 45_000;
 
 export async function POST(request: NextRequest) {
-  console.log("HIT: /api/generate - Request received at:", new Date().toISOString());
+  console.log("HIT: /api/generate (Face Swap) - Request received at:", new Date().toISOString());
 
   try {
     let body: { image?: string; styleId?: string; analysis?: AnalysisResult; demoMode?: boolean };
@@ -21,13 +21,13 @@ export async function POST(request: NextRequest) {
       return Response.json(
         {
           success: false,
-          error: 'Invalid request body. Expected JSON with "image", "styleId", and "analysis" fields.',
+          error: 'Invalid request body. Expected JSON with "image" and "styleId" fields.',
         } satisfies ApiResponse<never>,
         { status: 400 }
       );
     }
 
-    const { image, styleId, analysis, demoMode } = body;
+    const { image, styleId, demoMode } = body;
 
     // Validate image
     if (!image || typeof image !== 'string') {
@@ -63,24 +63,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate analysis object
-    if (!analysis || typeof analysis !== 'object') {
-      return Response.json(
-        {
-          success: false,
-          error: 'Missing or invalid "analysis" field. Please complete the photo analysis step first.',
-        } satisfies ApiResponse<never>,
-        { status: 400 }
-      );
-    }
-
     // ── Demo mode bypass if requested ──
     if (demoMode) {
-      console.log("[generate] Demo mode active, returning transformed preview...");
+      console.log("[generate] Demo mode active, returning template image preview...");
       return Response.json(
         {
           success: true,
-          data: { generatedImage: image },
+          data: { generatedImage: style.frontUrl },
         } satisfies ApiResponse<{ generatedImage: string }>,
         { status: 200 }
       );
@@ -99,12 +88,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ── Call Colab/Ngrok server ──
-    console.log(`[generate] Calling Ngrok server at: ${ngrokUrl}/generate for style: ${style.name}...`);
+    // ── Call Colab Face Swap server ──
+    console.log(`[generate] Calling Face Swap server for style: ${style.name}...`);
     let generatedImage: string;
     try {
       generatedImage = await Promise.race([
-        generateStylePreview(image, styleId, analysis),
+        generateStylePreview(image, styleId),
         new Promise<never>((_, reject) =>
           setTimeout(
             () => reject(new Error('TIMEOUT')),
@@ -112,16 +101,16 @@ export async function POST(request: NextRequest) {
           )
         ),
       ]);
-      console.log("[generate] Image generation SUCCESS!");
+      console.log("[generate] Face Swap SUCCESS!");
     } catch (genError) {
       const message = genError instanceof Error ? genError.message : String(genError);
-      console.error('[generate] Generation failed with error:', message);
+      console.error('[generate] Face Swap failed with error:', message);
 
       if (message === 'TIMEOUT') {
         return Response.json(
           {
             success: false,
-            error: 'Image generation timed out (45s). The Colab GPU server may be busy processing.',
+            error: 'Face Swap generation timed out (45s). The Colab GPU server may be busy processing.',
           } satisfies ApiResponse<never>,
           { status: 504 }
         );
@@ -131,7 +120,7 @@ export async function POST(request: NextRequest) {
         return Response.json(
           {
             success: false,
-            error: `Your Google Colab Ngrok tunnel is OFFLINE (${ngrokUrl}). Please run your Colab notebook cell to start the FastAPI server and ngrok tunnel.`,
+            error: `Your Google Colab Ngrok tunnel is OFFLINE (${ngrokUrl}). Please run your Colab notebook cell.`,
           } satisfies ApiResponse<never>,
           { status: 502 }
         );
