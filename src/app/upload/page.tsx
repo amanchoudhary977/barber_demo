@@ -3,7 +3,7 @@
 import { useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useFlow } from '@/context/FlowContext';
-import { StyleOption } from '@/types';
+import { StyleOption, AnalysisResult } from '@/types';
 import { getRecommendedStyles } from '@/lib/styles-data';
 
 import PhotoUploader from '@/components/PhotoUploader';
@@ -68,9 +68,18 @@ export default function UploadPage() {
         body: JSON.stringify({ image }),
       });
 
-      const data = await response.json();
+      const text = await response.text();
+      let data: { success?: boolean; data?: AnalysisResult; error?: string };
+      try {
+        data = JSON.parse(text);
+      } catch {
+        console.error('API /api/analyze non-JSON response:', text);
+        setError(`Server error (${response.status}): ${text.substring(0, 150)}`);
+        setStep('upload');
+        return;
+      }
 
-      if (!data.success) {
+      if (!data.success || !data.data) {
         setError(data.error || 'Analysis failed. Please try again.');
         setStep('upload');
         return;
@@ -79,6 +88,7 @@ export default function UploadPage() {
       setAnalysis(data.data);
       // step is automatically set to 'results' by setAnalysis
     } catch (err) {
+      console.error('Analysis request error:', err);
       setError(
         err instanceof Error
           ? err.message
@@ -113,9 +123,18 @@ export default function UploadPage() {
           }),
         });
 
-        const data = await response.json();
+        const text = await response.text();
+        let data: { success?: boolean; data?: { generatedImage: string }; error?: string };
+        try {
+          data = JSON.parse(text);
+        } catch {
+          console.error('API /api/generate non-JSON response:', text);
+          setError(`Server error (${response.status}): ${text.substring(0, 150)}`);
+          setStep('selecting');
+          return;
+        }
 
-        if (!data.success) {
+        if (!data.success || !data.data?.generatedImage) {
           setError(data.error || 'Generation failed. Please try again.');
           setStep('selecting');
           return;
@@ -123,9 +142,9 @@ export default function UploadPage() {
 
         setGeneratedImage(data.data.generatedImage);
         // step is automatically set to 'preview' by setGeneratedImage
-        // Navigate to the results page
         router.push('/results');
       } catch (err) {
+        console.error('Generation request error:', err);
         setError(
           err instanceof Error
             ? err.message

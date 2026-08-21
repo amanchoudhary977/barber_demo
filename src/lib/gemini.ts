@@ -1,8 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AnalysisResult } from '@/types';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-
 const ANALYSIS_PROMPT = `You are an expert grooming and styling consultant. Analyze this person's photo and provide a detailed assessment.
 
 Return your analysis as a valid JSON object with EXACTLY this structure (no markdown, no code blocks, just pure JSON):
@@ -22,6 +20,12 @@ For recommendations, suggest 3 specific hairstyle or beard style names that woul
 IMPORTANT: Return ONLY the JSON object, nothing else. No explanation, no markdown formatting.`;
 
 export async function analyzePhoto(imageBase64: string): Promise<AnalysisResult> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not configured in environment variables');
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
   // Strip the data URL prefix if present
