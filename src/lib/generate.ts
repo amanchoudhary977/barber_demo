@@ -1,8 +1,6 @@
 import { AnalysisResult } from '@/types';
 import { getStyleById } from '@/lib/styles-data';
 
-const NGROK_API_URL = process.env.NGROK_API_URL;
-
 /**
  * Composes a detailed generation prompt from the style template and analysis context.
  */
@@ -32,44 +30,47 @@ export async function generateStylePreview(
   styleId: string,
   analysis: AnalysisResult
 ): Promise<string> {
-  if (!NGROK_API_URL) {
+  const rawUrl = process.env.NGROK_API_URL || '';
+  if (!rawUrl) {
     throw new Error(
       'NGROK_API_URL is not configured. Please set it in your .env.local file.'
     );
   }
 
+  // Normalize URL to prevent /generate/generate or trailing slashes
+  const baseUrl = rawUrl.trim().replace(/\/generate\/?$/i, '').replace(/\/+$/, '');
+  const endpoint = `${baseUrl}/generate`;
+
   const prompt = composePrompt(styleId, analysis);
 
-  // Strip the data URL prefix if present to get raw base64
+  // Strip data URL prefix to get raw base64
   const base64Data = imageBase64.includes(',')
     ? imageBase64.split(',')[1]
     : imageBase64;
 
-  // Convert base64 to a Blob for multipart/form-data
-  const byteCharacters = atob(base64Data);
-  const byteNumbers = new Array(byteCharacters.length);
-  for (let i = 0; i < byteCharacters.length; i++) {
-    byteNumbers[i] = byteCharacters.charCodeAt(i);
-  }
-  const byteArray = new Uint8Array(byteNumbers);
-  const blob = new Blob([byteArray], { type: 'image/jpeg' });
+  // Convert base64 to binary buffer/Blob for multipart/form-data
+  const buffer = Buffer.from(base64Data, 'base64');
+  const blob = new Blob([buffer], { type: 'image/jpeg' });
 
   // Build multipart/form-data
   const formData = new FormData();
   formData.append('image', blob, 'photo.jpg');
   formData.append('prompt', prompt);
 
-  const response = await fetch(`${NGROK_API_URL}/generate`, {
+  console.log(`[generate] Sending POST request to: ${endpoint}`);
+
+  const response = await fetch(endpoint, {
     method: 'POST',
     body: formData,
     headers: {
-      // Don't set Content-Type — let the browser set it with the boundary
       'ngrok-skip-browser-warning': 'true',
+      'User-Agent': 'StyleGenius/1.0',
     },
   });
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => 'Unknown error');
+    console.error(`[generate] Colab server error (${response.status}):`, errorText);
     throw new Error(
       `Image generation failed (${response.status}): ${errorText.substring(0, 200)}`
     );
@@ -78,7 +79,7 @@ export async function generateStylePreview(
   const data = await response.json();
 
   if (!data.image) {
-    throw new Error('Generation server returned no image data');
+    throw new Error('Generation server returned no "image" field in response JSON');
   }
 
   return data.image; // base64 encoded generated image
