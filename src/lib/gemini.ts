@@ -19,6 +19,9 @@ For recommendations, suggest 3 specific hairstyle or beard style names that woul
 
 IMPORTANT: Return ONLY the JSON object, nothing else. No explanation, no markdown formatting.`;
 
+// Supported Gemini models in order of priority
+const MODELS_TO_TRY = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+
 export async function analyzePhoto(imageBase64: string): Promise<AnalysisResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -26,7 +29,6 @@ export async function analyzePhoto(imageBase64: string): Promise<AnalysisResult>
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
   // Strip the data URL prefix if present
   const base64Data = imageBase64.includes(',')
@@ -40,9 +42,25 @@ export async function analyzePhoto(imageBase64: string): Promise<AnalysisResult>
     },
   };
 
-  const result = await model.generateContent([ANALYSIS_PROMPT, imagePart]);
-  const response = result.response;
-  const text = response.text();
+  let lastError: Error | null = null;
+  let text = '';
+
+  // Try supported model names
+  for (const modelName of MODELS_TO_TRY) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const result = await model.generateContent([ANALYSIS_PROMPT, imagePart]);
+      text = result.response.text();
+      if (text) break;
+    } catch (err) {
+      console.warn(`[gemini] Model ${modelName} failed, trying fallback...`, err instanceof Error ? err.message : err);
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
+  if (!text) {
+    throw lastError || new Error('Failed to generate analysis with Gemini');
+  }
 
   // Parse the JSON response, handling potential markdown code blocks
   let jsonString = text.trim();

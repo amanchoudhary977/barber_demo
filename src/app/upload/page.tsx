@@ -19,6 +19,7 @@ export default function UploadPage() {
   const {
     step,
     image,
+    fileName,
     analysis,
     error,
     setImage,
@@ -272,10 +273,15 @@ export default function UploadPage() {
               </p>
             </div>
 
-            <PhotoUploader onImageSelect={handleImageSelect} />
+            <PhotoUploader
+              currentImage={image}
+              currentFileName={fileName}
+              onImageSelect={handleImageSelect}
+              onRemove={resetToUpload}
+            />
 
             {image && (
-              <div className="flex justify-center animate-fade-in">
+              <div className="flex justify-center animate-fade-in pt-2">
                 <Button
                   variant="primary"
                   size="lg"

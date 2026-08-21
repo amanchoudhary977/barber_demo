@@ -4,7 +4,10 @@ import { useCallback, useRef, useState } from 'react';
 import Card from '@/components/ui/Card';
 
 interface PhotoUploaderProps {
+  currentImage?: string | null;
+  currentFileName?: string | null;
   onImageSelect: (base64: string, fileName: string) => void;
+  onRemove?: () => void;
   isDisabled?: boolean;
 }
 
@@ -64,15 +67,19 @@ function compressImage(file: File): Promise<string> {
 }
 
 export default function PhotoUploader({
+  currentImage,
+  currentFileName,
   onImageSelect,
+  onRemove,
   isDisabled = false,
 }: PhotoUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
-  const [preview, setPreview] = useState<string | null>(null);
-  const [fileName, setFileName] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const preview = currentImage || null;
+  const fileName = currentFileName || 'uploaded-photo.jpg';
 
   const validateFile = (file: File): string | null => {
     if (!ACCEPTED_TYPES.includes(file.type)) {
@@ -97,8 +104,6 @@ export default function PhotoUploader({
       setIsProcessing(true);
       try {
         const compressedBase64 = await compressImage(file);
-        setPreview(compressedBase64);
-        setFileName(file.name);
         onImageSelect(compressedBase64, file.name);
       } catch (err) {
         console.error('Image compression error:', err);
@@ -146,13 +151,24 @@ export default function PhotoUploader({
   );
 
   const handleRemove = useCallback(() => {
-    setPreview(null);
-    setFileName(null);
     setError(null);
-  }, []);
+    if (onRemove) {
+      onRemove();
+    }
+  }, [onRemove]);
 
   return (
     <div className="w-full max-w-lg mx-auto animate-fade-in-up">
+      {/* Hidden file input always in DOM so it can be clicked reliably */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={ACCEPTED_TYPES.join(',')}
+        onChange={handleFileInput}
+        className="hidden"
+        id="photo-upload-input"
+      />
+
       {!preview ? (
         /* ── Upload Zone ──────────────────────────── */
         <Card padding="none" className="overflow-hidden">
@@ -256,15 +272,6 @@ export default function PhotoUploader({
               ))}
             </div>
           </div>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={ACCEPTED_TYPES.join(',')}
-            onChange={handleFileInput}
-            className="hidden"
-            id="photo-upload-input"
-          />
         </Card>
       ) : (
         /* ── Preview ──────────────────────────────── */
@@ -279,20 +286,33 @@ export default function PhotoUploader({
             {/* Overlay gradient */}
             <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/60 to-transparent" />
 
-            {/* File name */}
+            {/* File name & Change Button */}
             <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between">
               <span className="text-xs text-white/80 font-medium truncate max-w-[60%]">
                 {fileName}
               </span>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleRemove();
-                }}
-                className="px-2.5 py-1 text-[10px] font-medium rounded-lg bg-white/10 backdrop-blur-sm text-white/80 hover:bg-white/20 hover:text-white transition-all duration-200 cursor-pointer"
-              >
-                Remove
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    fileInputRef.current?.click();
+                  }}
+                  className="px-2.5 py-1 text-[10px] font-medium rounded-lg bg-white/15 backdrop-blur-sm text-white hover:bg-white/25 transition-all duration-200 cursor-pointer"
+                >
+                  Change
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRemove();
+                  }}
+                  className="px-2.5 py-1 text-[10px] font-medium rounded-lg bg-error/20 backdrop-blur-sm text-error hover:bg-error/30 transition-all duration-200 cursor-pointer"
+                >
+                  Remove
+                </button>
+              </div>
             </div>
           </div>
         </Card>
